@@ -31,7 +31,7 @@ def exec_cmd(hostname, port=22, username=None, password=None, command=None):
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(hostname, port, username, password)
+        ssh.connect(hostname, port, username, password, timeout=5)
         stdin, stdout, stderr = ssh.exec_command(command)
         return stdout.read()
         ssh.close()
@@ -116,7 +116,7 @@ def pkg_transfer(action, section):
                 log_info = '[Error] %s is a file , can\'t %s directory to the file' % (local_res, action)
         ## local_res and remote_res are files
         elif os.path.isfile(local_res) and r_stat.startswith('-'):
-            local_res_md5 = get_md5(local_res_md5)
+            local_res_md5 = get_md5(local_res)
             remote_res_md5 = exec_cmd(hostname, port, username, password, \
                                       "md5sum %s |awk 'BEGIN {ORS=\"\"} {print $1}'" % remote_res)
             if local_res_md5 == remote_res_md5:
