@@ -1,0 +1,645 @@
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+# Purpose: script for deployment
+# Author : Uchen
+# Date   : 2016-02-16
+# Version: 0.3.1
+
+import tarfile
+import zipfile
+import shutil
+import time
+import datetime
+import sys
+import os
+import subprocess
+import telnetlib
+import ConfigParser
+import logging
+import logging.config
+from logging.handlers import RotatingFileHandler
+
+
+BASEROOT = os.path.dirname(os.path.realpath(__file__))
+CONFIG_FILE = '{0}/config.cfg'.format(BASEROOT)
+if not os.path.exists('{0}/logs'.format(BASEROOT)):
+    os.mkdir('{0}/logs'.format(BASEROOT))
+LOGGER_FILE = '{0}/logs/samwise.log'.format(BASEROOT)
+
+def color_show(string, mode='', fore='', back=''):
+    '''Display color for python terminal'''
+    STYLE = {
+        'fore': {
+            'black': 30, 'red': 31, 'green': 32, 'yellow': 33,
+            'blue': 34, 'purple': 35, 'cyan': 36, 'white': 37,
+        },
+        'back': {
+            'black': 40, 'red': 41, 'green': 42, 'yellow': 43,
+            'blue': 44, 'purple': 45, 'cyan': 46, 'white': 47,
+        },
+        'mode': {
+            'bold': 1, 'underline': 4, 'blink': 5, 'invert': 7,
+        },
+        'default': {
+            'end': 0,
+        }
+    }
+    mode = '{0}'.format(STYLE['mode'][mode]) if STYLE['mode'].has_key(mode) else ''
+    fore = '{0}'.format(STYLE['fore'][fore]) if STYLE['fore'].has_key(fore) else ''
+    back = '{0}'.format(STYLE['back'][back]) if STYLE['back'].has_key(back) else ''
+    style = ';'.join([s for s in [mode, fore, back] if s])
+    style = '\033[{0}m'.format(style) if style else ''
+    end = '\033[{0}m'.format(STYLE['default']['end']) if style else ''
+    return '{0}{1}{2}'.format(style, string, end)
+
+
+def _prompt_show_msg(msg, level='info', print_out=False):
+    ''' 显示相关错误信息并且退出程序 '''
+    if level == 'info':
+        # print(color_show('[INFO]\t* {msg}'.format(msg=msg), fore='green'))
+        logging.info(msg)
+        if print_out: print(msg)
+    elif level == 'warn':
+        # print(color_show('[WARN]\t* {msg}'.format(msg=msg), fore='yellow'))
+        logging.warn(msg)
+    elif level == 'error':
+        # print(color_show('[ERROR]\t* {msg}'.format(msg=msg), fore='red'))
+        logging.error(msg)
+        print('[ERROR]\t* {msg}'.format(msg=msg))
+        sys.exit()
+    else:
+        print('Message log level:\t\t\t[Unavailable]')
+        sys.exit()
+
+
+def _check_file_exists(conf_file):
+    ''' 检测指定的配置文件是否存在 '''
+    if not os.path.exists(conf_file):
+        _prompt_show_msg("Cann't find config file: {conf_file}".format(conf_file=conf_file), level='error')
+        sys.exit()
+    return conf_file
+
+
+class Config(object):
+    ''' Return section of config file '''
+    def __init__(self, CONFIG):
+        self.CONFIG = _check_file_exists(CONFIG)
+        self.cfg = ConfigParser.ConfigParser()
+        self.cfg.read(self.CONFIG)
+
+    def list_nodes(self):
+        return self.cfg.sections()
+
+    def list_options(self, node):
+        try:
+            self.options = self.cfg.options(node)
+        except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) as e:
+            _prompt_show_msg('{0}'.format(str(e)), level='error')
+        return self.options
+
+    def get_items_value(self, node, option):
+        self.node = node
+        self.option = option
+
+        try:
+            self.items_value = self.cfg.get(self.node, self.option)
+        except (ConfigParser.NoSectionError, ConfigParser.NoOptionError) as e:
+            _prompt_show_msg('{0}'.format(str(e)), level='error')
+        ## opt_value can't be null
+        if not self.items_value:
+            _prompt_show_msg("[{0}] node's [{1}] option's value is empty!".format(self.node, self.options),
+                             level='error')
+        return self.items_value
+
+
+class Deployment(object):
+    ''' Deployment main '''
+    def __init__(self, app_name):
+        self.app_name = str(app_name)
+        self.cfg = Config(CONFIG_FILE)
+        self.cfg_sections = self.cfg.list_nodes()
+        self.cfg_options = self.cfg.list_options(self.app_name)
+
+        ## main base variables
+        ## self.backups_path: the path of backup file
+        ## self.uppkgs_path: the path of update file
+        self.backups_path = self.cfg.get_items_value('base', 'backups_path')
+        self.uppkgs_path = self.cfg.get_items_value('base', 'uppkgs_path')
+        self.base_info = [self.backups_path, self.uppkgs_path]
+        ## if directory don't exist, create it.
+        for p_ in self.base_info:
+            if not os.path.exists(p_):
+                os.makedirs(p_)
+        ## self.path: the absolute path of update directory or file
+        ## if path isn't a directory, exit.
+        self.path = self.cfg.get_items_value(self.app_name, 'path')
+        if not self.path.endswith('/'):
+            self.base_tgt = os.path.basename(self.path)
+        else:
+            _prompt_show_msg('"{0}" cannot end with "/"'.format(self.path), level='error')
+        ## self.src_tgt: the update file
+        self.src_tgt = '{0}/{1}'.format(self.uppkgs_path, self.cfg.get_items_value(self.app_name, 'name'))
+        ## self.up_type: Full or diff update
+        self.up_type = self.cfg.get_items_value(self.app_name, 'type')
+        self.unzip = self.cfg.get_items_value(self.app_name, 'unzip')
+
+        ## self.exclude: exclude files or directory, type is list
+        if self.check_get_option('exclude'):
+            self.exclude = self.check_get_option('exclude').split(',')
+        else:
+            self.exclude = []
+        self.service = self.check_get_option('service')
+        self.port = self.check_get_option('port')
+        self.startup = self.check_get_option('startup')
+        self.check_url = self.check_get_option('check_url')
+
+
+    def check_get_option(self, opt_name):
+        '''
+        Check and get option
+        :param opt_name: option name
+        :return: option value
+        '''
+        if opt_name in self.cfg_options:
+            option = self.cfg.get_items_value(self.app_name, opt_name)
+        else:
+            option = None
+        return option
+
+
+    def backup(self):
+        '''
+        Backup for application
+        :return: none
+        '''
+        bak_file = '{0}/{1}.{2}'.format(self.backups_path, self.base_tgt, time.strftime("%Y-%m-%d-%H%M", time.localtime()))
+
+        if os.path.isfile(self.path):
+            shutil.copy(self.path, bak_file)
+        elif os.path.isdir(self.path):
+            if os.listdir(self.path):
+                bak_file = '{0}.tar.gz'.format(bak_file)
+                bak_tar = tarfile.open(bak_file, 'w:gz')
+                os.chdir(self.path)
+                bak_tar.add('./')    ## Keep the directory
+                bak_tar.close()
+            else:
+                logging.warn('[{0}] is empty directory'.format(self.path))
+        else:
+            _prompt_show_msg('No such file or directory: [{0}]'.format(self.path), level='error')
+
+        if os.path.exists(bak_file):
+            _prompt_show_msg('Backup "{0}": OK'.format(self.app_name), level='info', print_out=True)
+            _prompt_show_msg('Backup file:[{0}]'.format(bak_file), level='info')
+        else:
+            _prompt_show_msg('Backup "{0}": Failed'.format(self.app_name), level='error')
+
+
+    def cleanup(self, keep_count=6):
+        '''
+        Clean the backups for backups directory
+        :param keep_count: this param is numbers for keeping backup files
+        :return: none
+        '''
+        # print('==> * Clean up backups of "{0}" ...'.format(self.app_name))
+        keep_count = int(keep_count)
+        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt) ]
+        ## sort reverse
+        bak_file.sort(reverse=True)
+        if len(bak_file) > keep_count:
+            for d_file in bak_file[keep_count:]:
+                os.remove('{0}/{1}'.format(self.backups_path, d_file))
+                _prompt_show_msg('Backup file: [{0}/{1}] has removed!'.format(self.backups_path, d_file), level='warn')
+        # else:
+        #     color('[INFO]\t* No backup file need to remove!', fore='green')
+
+
+    def __delete_directory(self, del_tgt, exclude=[]):
+        '''
+        Delete all files and folders directory
+        :param del_tgt: the delete target, a absolute path.
+        :param exclude: excluded files and folders, type is list.
+        :return: none
+        '''
+        if os.path.isfile(del_tgt):
+            os.remove(del_tgt)
+        if os.path.isdir(del_tgt):
+            path_tgts = os.listdir(del_tgt)
+            for p_tgt in path_tgts:
+                if p_tgt in exclude:
+                    continue
+                file_path = os.path.join(del_tgt, p_tgt)
+                if os.path.isfile(file_path):
+                    try:
+                        os.remove(file_path)
+                    except os.error as e:
+                        _prompt_show_msg('{0}'.format(str(e)), level='error')
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path, True)
+        logging.warn('Delete all files of [{0}], exclude {1}!'.format(del_tgt, exclude))
+
+
+    def replace(self):
+        '''
+        Update for application
+        :return: none
+        '''
+        if not os.path.isfile(self.src_tgt):
+            _prompt_show_msg('No such file: [{0}]'.format(self.src_tgt), level='error')
+        else:
+            file_date = time.strftime('%Y-%m-%d %X', time.localtime(os.path.getctime(self.src_tgt)))
+            current_date = time.strftime('%Y-%m-%d', time.localtime())
+            if current_date != file_date.split()[0]:
+                _prompt_show_msg("[{0}] actime is: =* {1} *=".format(self.src_tgt, file_date), level='warn')
+
+        ## delete files in web document root
+        if self.up_type == 'full' and os.path.isdir(self.path):
+            self.__delete_directory(self.path, self.exclude)
+
+        ## unzip tar.gz file to web document root
+        ## update package is tar.gz
+        if tarfile.is_tarfile(self.src_tgt) and os.path.isdir(self.path):
+            up_tar = tarfile.open(self.src_tgt, 'r')
+            up_tar.extractall(self.path)
+            up_tar.close()
+            # with tarfile.open(self.src_tgt, 'r') as up_tar:
+            #     up_tar.extractall(self.path)
+            logging.info('Extract [{0}] successful!'.format(self.src_tgt))
+        ## micro service single jar update
+        elif self.src_tgt.endswith('.jar') and os.path.isfile(self.path):
+            shutil.copy(self.src_tgt, self.path)
+            logging.info('Copy [{0}] successful!'.format(self.src_tgt))
+        ## war package update
+        elif self.src_tgt.endswith('.war') and self.up_type == 'full':
+            ## unzip war update
+            if self.unzip and os.path.isdir(self.path):
+                zip_war = zipfile.ZipFile(self.src_tgt, 'r')
+                zip_war.extractall(self.path)
+                zip_war.close()
+                logging.info('Unpack [{0}] successful!'.format(self.src_tgt))
+            ## whole war with auto unpack war
+            else:
+                shutil.copy(self.src_tgt, self.path)
+                war_dir = os.path.splitext(self.path)[0]
+                if os.path.exists(war_dir) and os.path.isdir(war_dir):
+                    shutil.rmtree(war_dir)
+                logging.info('Copy [{0}] successful!'.format(self.src_tgt))
+
+        if (os.path.isdir(self.path) and os.listdir(self.path)) or os.path.isfile(self.path):
+            _prompt_show_msg('Update "{0}": OK'.format(self.app_name), level='info', print_out=True)
+        else:
+            _prompt_show_msg('Update "{0}": Failed!'.format(self.app_name), level='error')
+            sys.exit()
+
+
+    def _get_pid(self, pattern):
+        '''
+        Get pid of match pattern
+        :param pattern: pattern of service, like "java.*tomcat"
+        :return:
+        '''
+        cmd = "ps -Ao pid,cmd |grep -E {0} |grep -v grep".format(pattern)
+        rc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        infos = rc.stdout.read().splitlines()
+        if len(infos) == 1:
+            service_pid = infos[0].split()[0]
+            # pid can't be 1
+            return int(service_pid)
+        elif not infos:
+            # pid doesn't exist
+            return -1
+        else:
+            _prompt_show_msg("Service doesn't exist or have multiple processes", level='warn')
+            return False
+
+
+    def _kill_pid(self, sig='TERM', pattern=''):
+        '''
+        Kill the pid of service
+        :param sig: signal of kill, like -9, -15;
+        :return:
+        '''
+        if pattern:
+            service_pid = self._get_pid(pattern)
+            if service_pid > 1:
+                cmd = "kill -{sig} {pid}".format(sig=sig, pid=service_pid)
+                subprocess.call(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                time.sleep(2) if sig == 'KILL' else time.sleep(5)
+                # 重启获取 pid, 如果返回为 -1, 说明 pid 已经不存在
+                if self._get_pid(service_pid) == -1:
+                    _prompt_show_msg('Kill "{0}" successful!'.format(pattern), level='info')
+                # 如果返回的 pid 与原来的相同, 则使用 kill -KILL 来杀进程
+                if self._get_pid(service_pid) == service_pid:
+                    self._kill_pid('KILL', service_pid)
+                    _prompt_show_msg('Kill "{0}" with -9.'.format(pattern), level='warn')
+                return True
+            else:
+                _prompt_show_msg("Service doesn't exist or have multiple processes", level='warn')
+                return False
+        else:
+            _prompt_show_msg("No service for killing", level='error')
+            return False
+
+
+    def stop_service(self):
+        '''
+        Kill the main process of webserver
+        :return:
+        '''
+        if self.service and self.port and self.startup:
+            pattern = self.service
+            msg = 'Stop "{0}": failed, No "{0}" process or too many'.format(self.service)
+            if self.service == 'supervisor':
+                # 通过 supervisorctl 关闭
+                cmd = 'supervisorctl stop {0}'.format(self.app_name)
+                rc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+                stop_info = rc.stdout.read().splitlines()
+                if len(stop_info) == 1:
+                    msg = stop_info[0].split('\n')[0]
+            else:
+                pattern = 'java.*{0}'.format(pattern) if self.service == 'tomcat' else pattern
+                if self._kill_pid(pattern=pattern):
+                    msg = 'Stop "{0}": OK'.format(self.service)
+            if 'failed' in msg:
+                _prompt_show_msg(msg, level='warn')
+            else:
+                _prompt_show_msg(msg, level='info', print_out=True)
+        else:
+            _prompt_show_msg('No available service and port!', level='warn')
+
+
+    def _get_url_code(self, url=''):
+        '''
+        Get url code
+        :param url:
+        :return:
+        '''
+        import urllib2
+        http_resp = None
+        try:
+            http_resp = urllib2.urlopen(url)
+            _prompt_show_msg('Response content: {0}'.format(http_resp.read()), level='info')
+            return http_resp.code
+        except Exception, e:
+            _prompt_show_msg(str(e), level='warn')
+            return False
+        finally:
+            if http_resp:
+                http_resp.close()
+
+
+    def _find_keyword(self, find_file='', key_word=''):
+        '''
+        Find keyword in find_file
+        :param find_file:
+        :param key_word:
+        :return:
+        '''
+        if find_file and key_word:
+            try:
+                with open(find_file) as f:
+                    file_content = f.read()
+                if 'Caused by' in file_content:
+                    _prompt_show_msg('Some error in the startup log', level='warn')
+                    return 'error'
+                elif key_word in file_content:
+                    _prompt_show_msg('"{0}" find in {1}'.format(key_word, find_file), level='info')
+                    return True
+            except IOError, e:
+                _prompt_show_msg(str(e), level='error')
+                return False
+
+
+    def _check_service(self, chk_file='', key_word='', interval=2, timeout=120):
+        '''
+        Check service
+        :param url:
+        :return:
+        '''
+        t = 1
+        times = int(timeout)/int(interval)
+        ## 通过请求 http 来检查
+        if key_word.startswith('http://'):
+            while t <= times:
+                if self._get_url_code(key_word) == 200:
+                    return True
+                t += 1
+                time.sleep(interval)
+            else:
+                _prompt_show_msg(u'Service "{0}" not available! or timeout'.format(self.app_name), level='error')
+                return False
+        ## 通过文件和关键字来检查
+        if os.path.isfile(chk_file) and key_word:
+            while t <= times:
+                find_rc = self._find_keyword(chk_file, key_word)
+                if find_rc == 'error':
+                    return False
+                elif find_rc:
+                    return True
+                t += 1
+                time.sleep(interval)
+            else:
+                _prompt_show_msg(u'Service "{0}" not available! or timeout'.format(self.app_name), level='error')
+                return False
+        ## 通过 telnet 来检查
+        if key_word == 'telnet':
+            while t <= times:
+                try:
+                    telnetlib.Telnet('127.0.0.1', self.port)
+                    _prompt_show_msg('Telent 127.0.0.1 {0}: OK'.format(self.port), level='info')
+                    return True
+                except:
+                    _prompt_show_msg('Telent 127.0.0.1 {0}: failed, retry'.format(self.port), level='info')
+                    t += 1
+                    time.sleep(interval)
+            else:
+                _prompt_show_msg(u'Service "{0}" not available! or timeout'.format(self.app_name), level='error')
+                return False
+
+
+    def start_service(self, check_log='/usr/enniu/tomcat/logs/catalina.log', key_word='Server startup in'):
+        '''
+        Start up process
+        :return:
+        '''
+        msg = 'Start "{0}": Failed or Timeout'.format(self.app_name)
+        if self.service and self.port and self.startup:
+            if self.service == 'tomcat' and 'tomcat' in self.startup:
+                today = datetime.datetime.now().strftime('%Y-%m-%d %X')
+                # catalina.log 启动日志, 存在先清空, 再打个时间 tag
+                check_log = os.path.join(self.startup.split('tomcat')[0],
+                                         'tomcat/logs/catalina.{0}.log'.format(today.split()[0]))
+                with open(check_log, 'w+') as f:
+                    f.truncate()
+                    f.write('-- Logged time: {time} --{linesep}'.format(time=today.split()[-1],
+                                                                        linesep=os.linesep))
+                # 启动 tomcat, 使用 nohup
+                self.startup = '/usr/bin/nohup {0} &'.format(self.startup)
+            if self.service == 'supervisor':
+                self.startup = '{0} {1}'.format(self.startup, self.app_name)
+
+            subprocess.call(self.startup, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            # 一段时间内循环请求,默认70s
+            if self.check_url and self._check_service(key_word=self.check_url):
+                msg = 'Start "{0}": OK'.format(self.service)
+                    # if self._check_service(key_word=self.check_url) else result
+            # 通过 catalina.log 文件中的关键字来检查
+            elif not self.check_url and self.service == 'tomcat':
+                ## 等待 2s, 生成新的 catalina.log 日志文件
+                # time.sleep(2)
+                if self._check_service(chk_file=check_log, key_word=key_word):
+                    msg = 'Start "{0}": OK'.format(self.service)
+            # 通过检测端口来查询状态
+            # elif self.service == 'supervisor' and self._check_service(key_word='telnet'):
+            elif not self.check_url and self._check_service(key_word='telnet'):
+                msg = 'Start "{0}": OK'.format(self.service)
+                    # if self._check_service(key_word='telnet') else result
+            _prompt_show_msg(msg, level='info', print_out=True)
+        else:
+            _prompt_show_msg('No service, port or startup command!', level='warn')
+
+
+    def status_service(self):
+        '''
+        Check service status
+        :return:
+        '''
+        msg = "{0}'s status: unknown".format(self.app_name)
+        if self.service == 'tomcat':
+            pid = self._get_pid('java.*tomcat')
+            msg = "Tomcat's pid: {0}".format(pid) if pid > 1 else 'Tomcat is not running'
+        if self.service == 'supervisor':
+            # 通过 supervisorctl 命令查看
+            cmd = 'supervisorctl status {0}'.format(self.app_name)
+            rc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+            status_info = rc.stdout.read().splitlines()
+            msg = status_info[0] if len(status_info) == 1 else 'No {0} service'.format(self.app_name)
+        _prompt_show_msg(msg, level='info', print_out=True)
+
+
+    def restart_service(self):
+        '''
+        Restart service
+        :return:
+        '''
+        if self.service == 'supervisor':
+            # 通过 supervisorctl 重启
+            msg = 'Restart "{0}": Failed'.format(self.app_name)
+            cmd = 'supervisorctl restart {0}'.format(self.app_name)
+            rc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+            stop_info = rc.stdout.read().splitlines()
+            if len(stop_info) == 2:
+                _prompt_show_msg('\n'.join(stop_info), level='info', print_out=True)
+                if self.check_url and self._check_service(key_word=self.check_url):
+                    msg = 'Restart "{0}": OK'.format(self.app_name)
+                elif self._check_service(key_word='telnet'):
+                    msg = 'Restart "{0}": OK'.format(self.app_name)
+            if 'OK' in msg:
+                _prompt_show_msg('Restart "{0}": OK'.format(self.app_name), level='info', print_out=True)
+            else:
+                _prompt_show_msg('Restart "{0}": Failed'.format(self.app_name), level='error')
+        else:
+            self.stop_service()
+            self.start_service()
+
+
+    def update(self, backup=True):
+        '''
+        Execute the whole deployment
+        :return:
+        '''
+        if backup:
+            self.backup()
+            self.cleanup()
+        self.replace()
+
+        if self.service and self.startup and self.port:
+            self.restart_service()
+
+
+    def rollback(self):
+        '''
+        Rollback the web application
+        :return:
+        '''
+        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt) ]
+        ## sort reverse
+        bak_file.sort(reverse=True)
+        rb_file = '{0}/{1}'.format(self.backups_path, bak_file[0])
+        msg = 'Rollback "{0}": Failed'.format(self.base_tgt)
+
+        if self.up_type == 'full' and self.path:
+            self.__delete_directory(self.path, self.exclude)
+        # 如果是 jar 包
+        if '.jar.' in rb_file:
+            shutil.copy('{0}'.format(rb_file), self.path)
+            msg = 'Copy [{0}] successful!'.format(rb_file)
+        # 如果是 war 包
+        if '.war.' in rb_file:
+            war_dir = os.path.splitext(self.path)[0]
+            if os.path.isdir(war_dir):
+                shutil.rmtree(war_dir)
+            shutil.copy('{0}'.format(rb_file), self.path)
+            msg = 'Copy [{0}] successful!'.format(rb_file)
+        # 如果是 tar 包
+        if tarfile.is_tarfile(rb_file) and os.path.isdir(self.path):
+            up_tar = tarfile.open(rb_file, 'r')
+            up_tar.extractall(self.path)
+            up_tar.close()
+            msg = 'Unpack [{0}] successful!'.format(rb_file)
+        # 打印输出日志
+        if 'successful' in msg:
+            _prompt_show_msg(msg, level='info')
+            msg = 'Rollback "{0}": OK'.format(self.base_tgt)
+        _prompt_show_msg(msg, level='info', print_out=True)
+
+        #: No need to restart
+        if self.service and self.startup and self.port:
+            self.restart_service()
+        else:
+            _prompt_show_msg("Needn't to restart web service!", level='warn')
+
+
+if __name__ == '__main__':
+    cfg = Config(CONFIG_FILE)
+    cfg_nodes = cfg.list_nodes()
+    cfg_nodes.remove('base')
+
+    usage_info = ('Usage: {0} [list|start|stop|status|restart|update|backup|upnoback|rollback] <section>\n'
+                 'Examples:\n'
+                 '  {0} list\t\t"get all available sections"\n'
+                 '  {0} status <service_name>\t\t"check status of section"\n'
+                 '  {0} restart <service_name>\t\t"restart the section"'.format(sys.argv[0]))
+
+    Rthandler = RotatingFileHandler(LOGGER_FILE, maxBytes=10*1024*1024, backupCount=3)
+    formatter = logging.Formatter('[%(asctime)s %(name)s %(levelname)s] - %(message)s')
+    Rthandler.setFormatter(formatter)
+    logger = logging.getLogger('')
+    logger.setLevel(logging.INFO)
+    logger.addHandler(Rthandler)
+
+    if len(sys.argv[1:]) == 1 and sys.argv[1] == 'list':
+        print('Available sections :')
+        for s_ in sorted(cfg_nodes):
+            print(s_)
+        sys.exit(0)
+    if len(sys.argv[1:]) == 2:
+        deploy = Deployment(sys.argv[2])
+        action_dict = {'start': deploy.start_service,
+                       'stop': deploy.stop_service,
+                       'status': deploy.status_service,
+                       'restart': deploy.restart_service,
+                       'update': deploy.update,
+                       'backup': deploy.backup,
+                       'rollback': deploy.rollback
+                       }
+        if sys.argv[1] == 'upnoback':
+            deploy.update(backup=False)
+        else:
+            try:
+                action_dict.get(sys.argv[1])()
+            except TypeError:
+                _prompt_show_msg('No this action: [{0}]!'.format(sys.argv[1]), level='error')
+    else:
+        print(usage_info)

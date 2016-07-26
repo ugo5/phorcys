@@ -5,15 +5,15 @@ set -e
 
 ## Your package name
 PKG_NAME="xxx.war"
-## Location of your update package on server
-UPPKG_DIR="xxx/xxx"    #"/opt/update-pkgs"
-## Location of backups
-BAK_DIR="xxx/xxx"   # "/opt/backups"
-## Path of your website document root
-SRC_DIR="xxx/xxx"  # "/var/www/root"
+## Location of your update package on server, like "/opt/update-pkgs"
+UPPKG_DIR="xxx/xxx"
+## Location of backups, like "/opt/backups"
+BAK_DIR="xxx/xxx"
+## Path of your website document root, like "/var/www/root"
+SRC_DIR="xxx/xxx"
 LOG="$(cd `dirname $0`;pwd)/deploy.log"
 
-[[ -z $UPPKG_DIR/$PKG_NAME ]] && (echo -e "\033[31m[Error:]\033[0m No specify the packge name"; exit 10) 
+[[ -z $UPPKG_DIR/$PKG_NAME ]] && (echo -e "\033[31m[Error:]\033[0m No specify the packge name"; exit 9) 
 
 if [[ "$PKG_NAME" =~ \.war$ ]];then
     BAK_PKG="$PKG_NAME-$(date +%Y%m%d)"
@@ -56,7 +56,7 @@ function Backups()
 
     	LogPrint "Backups the website codes to $BAK_DIR" $LOG 
     	if [[ "$BAK_PKG" =~ \.tar.gz$ ]];then
-            [[ ! -e ${PKG_NAME%.*} ]] && echo -e "\033[31m[Error:]\033[0m No update site directory"; exit 10 
+            [[ ! -e ${PKG_NAME%.*} ]] && (echo -e "\033[31m[Error:]\033[0m No update site directory"; exit 11)
             tar czvf $BAK_DIR/$BAK_PKG ${PKG_NAME%.*}/* >> $LOG
         else
     	    /bin/cp -v $PKG_NAME $BAK_DIR/$BAK_PKG >> $LOG
