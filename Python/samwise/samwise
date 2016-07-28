@@ -203,7 +203,7 @@ class Deployment(object):
         '''
         # print('==> * Clean up backups of "{0}" ...'.format(self.app_name))
         keep_count = int(keep_count)
-        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt) ]
+        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt + '.') ]
         ## sort reverse
         bak_file.sort(reverse=True)
         if len(bak_file) > keep_count:
