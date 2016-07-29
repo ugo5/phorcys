@@ -137,6 +137,10 @@ class Deployment(object):
             self.base_tgt = os.path.basename(self.path)
         else:
             _prompt_show_msg('"{0}" cannot end with "/"'.format(self.path), level='error')
+        ## ** new self.backups_path    
+        self.backups_path = '{0}/{1}'.format(self.backups_path, self.base_tgt.split('.')[0])
+        if not os.path.exists(self.backups_path):
+            os.mkdir(self.backups_path)                
         ## self.src_tgt: the update file
         self.src_tgt = '{0}/{1}'.format(self.uppkgs_path, self.cfg.get_items_value(self.app_name, 'name'))
         ## self.up_type: Full or diff update
@@ -563,7 +567,7 @@ class Deployment(object):
         Rollback the web application
         :return:
         '''
-        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt) ]
+        bak_file = [ _bak for _bak in os.listdir(self.backups_path) if _bak.startswith(self.base_tgt + '.') ]
         ## sort reverse
         bak_file.sort(reverse=True)
         rb_file = '{0}/{1}'.format(self.backups_path, bak_file[0])
