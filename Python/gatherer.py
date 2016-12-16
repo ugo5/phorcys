@@ -284,19 +284,21 @@ def get_file_content(path, default=None, strip=True):
     return data
 
 
-def get_linux_address(nic):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    return socket.inet_ntoa(fcntl.ioctl(
-        s.fileno(),
-        0x8915,  # SIOCGIFADDR
-        struct.pack('256s', nic[:15])
-    )[20:24])
-
-
 def get_file_lines(path):
     '''file.readlines() that closes the file'''
     with open(path) as datafile:
         return datafile.readlines()
+
+
+def get_linux_address(nic):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        ret_address = socket.inet_ntoa(fcntl.ioctl(s.fileno(),
+                                    0x8915,  # SIOCGIFADDR
+                                    struct.pack('256s', nic[:15]))[20:24])
+        return ret_address
+    except:
+        pass
 
 
 def get_address():
