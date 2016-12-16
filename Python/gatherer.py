@@ -39,7 +39,7 @@ if SYSTEM.lower() == 'windows':
 # 脚本路径
 DIR_ROOT = os.path.dirname(os.path.abspath(__file__))
 # 定义机房
-IDC_LIST = {'HZ':u'杭州', 'WH':u'武汉', 'JH':u'金华'}
+IDC_LIST = {'HZ': u'杭州', 'WH': u'武汉', 'JH': u'金华'}
 
 
 class Logger(object):
@@ -81,6 +81,7 @@ class Logger(object):
         return self.logger
 
 # --------------------------------------------------
+
 
 class Factors(object):
     '''Get basic platform factors'''
@@ -126,7 +127,6 @@ class LinuxHardware(Factors):
 
     def populate(self):
         self.get_device_virtual()
-        # self.get_cpu()
         self.get_memory()
         self.get_disk()
         self.get_network()
@@ -153,7 +153,9 @@ class LinuxHardware(Factors):
             data = line.split(":", 1)
             # Once find memtotal ,break for circle
             if line.startswith('MemTotal:'):
-                default = pretty_bytes(float(data[1].strip().split()[0]) * 1024)
+                default = pretty_bytes(
+                    float(data[1].strip().split()[0]) * 1024
+                )
                 break
         self.factors['menMsg'] = default
 
@@ -166,7 +168,7 @@ class LinuxHardware(Factors):
             return
 
         disk_msg = 'No device'
-        device =[]
+        device = []
         for block in block_devs:
             try:
                 path = os.readlink(os.path.join(sys_blk, block))
@@ -190,7 +192,7 @@ class LinuxHardware(Factors):
             device.append('%s-%s' % (block, size))
 
         if device:
-           disk_msg = ','.join(device)
+            disk_msg = ','.join(device)
 
         self.factors['diskMsg'] = disk_msg
 
@@ -230,8 +232,8 @@ class WindowsHardware(Factors):
     # 获取 device virtual 信息
     def get_device_virtual(self):
         self._platform = platform.platform()
-        self.factors['kernelVersion'] = self._platform.split('-',2)[-1]
-        self.factors['osType'] = '-'.join(self._platform.split('-',2)[0:2])
+        self.factors['kernelVersion'] = self._platform.split('-', 2)[-1]
+        self.factors['osType'] = '-'.join(self._platform.split('-', 2)[0:2])
 
         c = wmi.WMI()
         # Device information
@@ -239,7 +241,7 @@ class WindowsHardware(Factors):
         self.factors['deviceCategory'] = '%s %s' % (
             self.computer_sys.Manufacturer,
             self.computer_sys.Model
-            )
+        )
         self.factors['machineCategory'] = u'虚拟机' \
             if 'VMware,' in self.computer_sys.Manufacturer \
             else u'物理机'
@@ -252,7 +254,6 @@ class WindowsHardware(Factors):
         # Disk information
         total_disk = c.Win32_DiskDrive()[0].Size
         self.factors['diskMsg'] = pretty_bytes(float(total_disk))
-
 
         # Network information
         mac_list = []
@@ -269,6 +270,7 @@ class WindowsHardware(Factors):
 logger = Logger(os.path.join(DIR_ROOT, 'logger.log'), 20).rotating_file(10, 3)
 logger_console = Logger(os.path.join(DIR_ROOT, 'logger.log'), 30).console_out()
 
+
 def get_file_content(path, default=None, strip=True):
     '''get file content with path parameter'''
     data = default
@@ -281,10 +283,21 @@ def get_file_content(path, default=None, strip=True):
                 data = default
     return data
 
+
+def get_linux_address(nic):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    return socket.inet_ntoa(fcntl.ioctl(
+        s.fileno(),
+        0x8915,  # SIOCGIFADDR
+        struct.pack('256s', nic[:15])
+    )[20:24])
+
+
 def get_file_lines(path):
     '''file.readlines() that closes the file'''
     with open(path) as datafile:
         return datafile.readlines()
+
 
 def get_address():
     '''Get ip address through socket.gethostname()'''
@@ -294,6 +307,7 @@ def get_address():
     except:
         address = 'none resolvable hostname'
     return address
+
 
 def pretty_bytes(size):
     ranges = (
@@ -311,6 +325,7 @@ def pretty_bytes(size):
             break
     return '%.2f %s' % (float(size) / threshold, suffix)
 
+
 def factors(system):
     factors = {}
     system = system.lower()
@@ -321,12 +336,13 @@ def factors(system):
         factors.update(WindowsHardware().populate())
     return factors
 
+
 def post_agent(url, data):
     response = None
     headers = {
         'Content-Type': 'application/json',
         'Accept': '*/*'
-        }
+    }
     j_data = json.dumps(data)
     logger.info(j_data)
     try:
@@ -340,7 +356,8 @@ def post_agent(url, data):
         logger.error('Post failed!')
     # return response.read() and response
 
-#-----------------------------------------------
+# -----------------------------------------------
+
 
 if __name__ == '__main__':
     url = 'http://cmdb.example.com/admin/api/v1/submitcmdbmsg'
