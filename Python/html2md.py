@@ -131,7 +131,7 @@ class HtmlToMd(object):
         if name in site_elements:
             html_tag = site_elements.get(name).get('html_tag')
             if html_tag:
-                html_tag = html_tag
+                html_tag = 'div'
             re_pattern = site_elements.get(name).get('re_pattern')
             repl = site_elements.get(name).get('repl')
             css_selector = site_elements.get(name).get('css_selector')
