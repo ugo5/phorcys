@@ -9,7 +9,10 @@
 简书，知乎，CSDN，segmentfault，掘金，cnblogs
 ```
 
-使用方法：
+其他的请根据站点的实际情况来设置参数
+
+
+#### 使用方法：
 ```
 Usage:
 html2md.py URL [NAME] [HTML_TAG] [CSS_SELECTOR] [RE_PATTERN] [REPL]
@@ -17,7 +20,7 @@ or:
 html2md.py --url URL [--name NAME] [--html-tag HTML_TAG] [--css-selector CSS_SELECTOR] [--re-pattern RE_PATTERN] [--repl REPL]
 ```
 
-参数说明：
+#### 参数说明：
 - `URL`：blog 页面地址
 - `NAME`：站点名称
 - `HTML_TAG`：html 的 tag 标签
