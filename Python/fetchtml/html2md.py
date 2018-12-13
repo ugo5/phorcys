@@ -38,7 +38,7 @@ site_elements = {
         'css_selector': 'blogpost-body'
     },
     'csdn': {
-        'html_tag': 'article',
+        'css_selector': 'article_content'
     },
     'jianshu': {
         're_pattern': '(src=")|(data-original-src=")',
@@ -121,7 +121,7 @@ class HtmlToMd(object):
         ## 获取网页主体
         self.url = url
         self.scheme, self.site, _headers = self.header(self.url)
-        html = requests.get(self.url, headers=_headers).text
+        html = requests.get(self.url, headers=_headers).content
         name = self.site if not name else name
         for _site in site_elements.keys():
             if url.find(_site) != -1:
@@ -135,9 +135,8 @@ class HtmlToMd(object):
             re_pattern = site_elements.get(name).get('re_pattern')
             repl = site_elements.get(name).get('repl')
             css_selector = site_elements.get(name).get('css_selector')
-
-        parser = 'html.parser' if name == 'juejin' else 'html5lib'
         ## bs4
+        parser = 'html.parser' if name == 'juejin' else 'html5lib'
         soup = BeautifulSoup(html, parser)
         title = soup.find_all("title")[0].get_text()
         article = str(soup.body)
