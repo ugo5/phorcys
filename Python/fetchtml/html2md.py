@@ -124,7 +124,7 @@ class HtmlToMd(object):
         html = requests.get(self.url, headers=_headers).content
         name = self.site if not name else name
         for _site in site_elements.keys():
-            if url.find(_site) != -1:
+            if self.site.find(_site) != -1:
                 name = _site
         if name == 'segmentfault' and url.split('/')[3] != 'a':
             return 'Segmentfault url not support, please check url with /a/'
