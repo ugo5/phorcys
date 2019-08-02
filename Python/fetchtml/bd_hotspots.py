@@ -22,7 +22,9 @@ def crawlit():
         'Uesr-Agent': random.choice(user_agents)
     }
     url = 'http://top.baidu.com/'
-    html = requests.get(url, headers=headers).content
+    resp = requests.get(url, headers=headers)
+    resp.encoding = requests.utils.get_encodings_from_content(resp.content)[0]
+    html = resp.text
     soup = BeautifulSoup(html, 'html.parser')
     content = soup.find(id='hot-list')
     rank_list =[n.get_text() for n in content.find_all('span', class_=re.compile("num-*"))]
