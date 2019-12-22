@@ -41,9 +41,10 @@ site_elements = {
         'css_selector': 'article_content'
     },
     'jianshu': {
+        'html_tag': 'section',
         're_pattern': '(src=")|(data-original-src=")',
         'repl': 'src="https:',
-        'css_selector': 'show-content'
+        'css_selector': 'ouvJEz'
     },
     'juejin': {
         'css_selector': 'entry-content'
@@ -52,6 +53,19 @@ site_elements = {
         're_pattern': 'data-src="',
         'repl': 'src="https://segmentfault.com',
         'css_selector': 'article__content'
+    },
+    # 淘股吧
+    'taoguba': {
+        'css_selector': 'p_coten'
+    },
+    # 拾荒网
+    '10huang': {
+        'css_selector': 'hl_body'
+    },
+    # 360doc
+    '360doc': {
+        'html_tag': 'td',    
+        'id_selector': 'artContent'
     },
     'zhihu': {
         # 'html_tag': 'div',
@@ -107,8 +121,9 @@ class HtmlToMd(object):
         print("== 下载完成: [%s]" % title)
         print("== 文件目录: [%s]" % dir_path)
 
-    def get_site(self, url, name=None, html_tag='div',
-                 css_selector=None, re_pattern=None, repl=None):
+    def get_site(self, url, name=None, html_tag=None,
+                 css_selector=None, id_selector=None, 
+                 re_pattern=None, repl=None):
         """
         :param url: 需要下载的 url
         :param name:  站点名称，也是本地保存的目录名
@@ -130,23 +145,35 @@ class HtmlToMd(object):
             return 'Segmentfault url not support, please check url with /a/'
         if name in site_elements:
             html_tag = site_elements.get(name).get('html_tag')
-            if html_tag:
+            if html_tag == None:
                 html_tag = 'div'
-            re_pattern = site_elements.get(name).get('re_pattern')
-            repl = site_elements.get(name).get('repl')
-            css_selector = site_elements.get(name).get('css_selector')
+            if css_selector == None:
+                css_selector = site_elements.get(name).get('css_selector')
+            if id_selector == None:
+                id_selector = site_elements.get(name).get('id_selector')
+            if re_pattern == None:
+                re_pattern = site_elements.get(name).get('re_pattern')
+            if repl == None:
+                repl = site_elements.get(name).get('repl')
         ## bs4
         parser = 'html.parser' if name == 'juejin' else 'html5lib'
+        # parser = 'html.parser'
         soup = BeautifulSoup(html, parser)
         title = soup.find_all("title")[0].get_text()
+        if name == 'taoguba':
+            title = title.split('_',1)[0]
+        elif name == '10huang':
+            title = title.split(u'_拾荒网')[0]
         article = str(soup.body)
+        # print soup.find_all(class_='ouvJEz')
         if html_tag and css_selector:
             article = str(soup.find_all(html_tag, class_=css_selector)[0])
+        elif html_tag and id_selector:
+            article = str(soup.find_all(html_tag, id=id_selector)[0])
         elif html_tag:
             article = str(soup.find_all(html_tag)[0])
         elif css_selector:
             article = str(soup.find_all(class_=css_selector)[0])
-
         ## 替图片的src加上https://(http://), 方便访问
         if re_pattern and repl:
             article = re.sub(re_pattern, repl, article)
@@ -154,7 +181,7 @@ class HtmlToMd(object):
         # pwd = os.getcwd()
         pwd = os.path.dirname(os.path.abspath(__file__))
         dir_path = os.path.join(pwd, name)
-        self.write2md(url, dir_path, title, article)
+        self.write2md(url, dir_path, title.strip(), article)
 
 
 if __name__ == '__main__':
